@@ -6,5 +6,5 @@ To check image orientation in (Splicer)[https://github.com/deadManAlive/splicer]
 
 TODO:
 
-- [x]: Orientation detection by iterating over rotation.
-- [ ]: Return best orientation.
+- [x] Orientation detection by iterating over rotation.
+- [ ] Return best orientation.
