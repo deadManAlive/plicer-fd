@@ -1,7 +1,6 @@
-use std::path::{Path, PathBuf};
+use std::path::{Path};
 
-use image::{GenericImageView, Rgba};
-use imageproc::{rect::Rect, drawing::draw_hollow_rect_mut};
+use image::{GenericImageView};
 use tensorflow::{Graph, ImportGraphDefOptions, Session, SessionOptions, SessionRunArgs, Tensor};
 
 mod util;
@@ -15,45 +14,50 @@ pub struct BBox {
     pub prob: f32,
 }
 
-const RED: Rgba<u8> = Rgba([255, 0, 0, 0]);
+#[derive(Debug)]
+pub enum Direction {
+    Up,
+    Right,
+    Down,
+    Left,
+}
 
-pub fn process(input: &Path, output: Option<&String>) -> Result<(), Box<dyn std::error::Error>> {
+use Direction::*;
+
+use crate::util::sigmoid_mapper;
+
+pub fn process(input: &Path) -> Result<Direction, Box<dyn std::error::Error>> {
     let model = include_bytes!("mtcnn.pb");
 
     let mut graph = Graph::new();
     graph.import_graph_def(model, &ImportGraphDefOptions::new())?;
 
     let mut input_image = image::open(input)?;
-    
-    // TODO: input_image.rotate to find image possible rotation
-    for i in 0..4 {
+
+    let mut dsize: Vec<(usize, f32)> = vec![(0, 0f32); 4];
+
+    for (i, _) in [Up, Right, Down, Left].iter().enumerate() {
         let image = input_image.clone();
-        let output = match output {
-            Some(v) => PathBuf::from(v),
-            None => {
-                util::append_path(input, format!("-det{}", 90 * i).as_str())
-            },
-        };
 
         let mut flattened: Vec<f32> = Vec::new();
-    
+
         for (_, _, rgb) in image.pixels() {
             flattened.push(rgb[2] as f32);
             flattened.push(rgb[1] as f32);
             flattened.push(rgb[0] as f32);
         }
-    
+
         let input = Tensor::new(&[image.height() as u64, image.width() as u64, 3])
             .with_values(&flattened)?;
-    
+
         let session = Session::new(&SessionOptions::new(), &graph)?;
-    
+
         let min_size = Tensor::new(&[]).with_values(&[40f32])?;
         let thresholds = Tensor::new(&[3]).with_values(&[0.6f32, 0.7f32, 0.7f32])?;
         let factor = Tensor::new(&[]).with_values(&[0.709f32])?;
-    
+
         let mut args = SessionRunArgs::new();
-    
+
         args.add_feed(&graph.operation_by_name_required("min_size")?, 0, &min_size);
         args.add_feed(
             &graph.operation_by_name_required("thresholds")?,
@@ -62,15 +66,15 @@ pub fn process(input: &Path, output: Option<&String>) -> Result<(), Box<dyn std:
         );
         args.add_feed(&graph.operation_by_name_required("factor")?, 0, &factor);
         args.add_feed(&graph.operation_by_name_required("input")?, 0, &input);
-    
+
         let bbox = args.request_fetch(&graph.operation_by_name_required("box")?, 0);
         let prob = args.request_fetch(&graph.operation_by_name_required("prob")?, 0);
-    
+
         session.run(&mut args)?;
-    
+
         let bbox_res: Tensor<f32> = args.fetch(bbox)?;
         let prob_res: Tensor<f32> = args.fetch(prob)?;
-    
+
         let bboxes: Vec<_> = bbox_res
             .chunks_exact(4)
             .zip(prob_res.iter())
@@ -82,22 +86,34 @@ pub fn process(input: &Path, output: Option<&String>) -> Result<(), Box<dyn std:
                 prob,
             })
             .collect();
-    
-        println!("BBox Length: {}, BBoxes:{:#?}", bboxes.len(), bboxes);
-    
-        let mut output_image = image;
-    
-        for bbox in bboxes {
-            let rect = Rect::at(bbox.x1 as i32, bbox.y1 as i32)
-                .of_size((bbox.x2 - bbox.x1) as u32, (bbox.y2 - bbox.y1) as u32);
-    
-            draw_hollow_rect_mut(&mut output_image, rect, RED);
-        }
-    
-        output_image.save(output)?;
+
+        let dcount = bboxes.len();
+        let prbavg = bboxes.iter().fold(0f32, |acc, bbox| acc + sigmoid_mapper(bbox.prob, 0.85));
+
+        dsize[i] = (
+            dcount,
+            if dcount == 0 {
+                0f32
+            } else {
+                prbavg / (dcount as f32)
+            },
+        );
+
         input_image = input_image.rotate90();
     }
 
+    let max_idx = dsize
+        .iter()
+        .enumerate()
+        .max_by(|(_, &(_, a)),(_, &(_, b))| a.total_cmp(&b))
+        .map(|(idx, _)| idx)
+        .unwrap();
 
-    Ok(())
+    match max_idx {
+        0 => Ok(Up),
+        1 => Ok(Left),
+        2 => Ok(Down),
+        3 => Ok(Right),
+        _ => Err("Something is wrong...")?,
+    }
 }

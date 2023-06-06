@@ -5,17 +5,16 @@ use plicer_fd;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
 
-    let (filename, outputfile) = match args.len() {
-        2 => (args.get(1), None),
-        3 => (args.get(1), args.get(2)),
-        _ => return Err("no file provided")?
+    let filename = match args.len() {
+        1 => return Err("no file provided")?,
+        _ => args.get(1),
     };
 
     let start = Instant::now();
-    plicer_fd::process(Path::new(&filename.unwrap()), outputfile)?;
+    let direction = plicer_fd::process(Path::new(&filename.unwrap()))?;
     let stop = start.elapsed();
 
-    println!("Process took {} us for {}", stop.as_micros(), filename.unwrap());
+    println!("It took {:.5} s to find out that '{}' was tilted {:?}", stop.as_secs_f32(), filename.unwrap(), direction);
 
     Ok(())
 }
