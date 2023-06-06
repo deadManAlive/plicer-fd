@@ -1,6 +1,6 @@
-use std::path::{Path};
+use std::path::Path;
 
-use image::{GenericImageView};
+use image::GenericImageView;
 use tensorflow::{Graph, ImportGraphDefOptions, Session, SessionOptions, SessionRunArgs, Tensor};
 
 mod util;
@@ -25,6 +25,8 @@ pub enum Direction {
 use Direction::*;
 
 use crate::util::sigmoid_mapper;
+
+const WAVG_THRES: f32 = 0.85;
 
 pub fn process(input: &Path) -> Result<Direction, Box<dyn std::error::Error>> {
     let model = include_bytes!("mtcnn.pb");
@@ -88,7 +90,9 @@ pub fn process(input: &Path) -> Result<Direction, Box<dyn std::error::Error>> {
             .collect();
 
         let dcount = bboxes.len();
-        let prbavg = bboxes.iter().fold(0f32, |acc, bbox| acc + sigmoid_mapper(bbox.prob, 0.85));
+        let prbavg = bboxes.iter().fold(0f32, |acc, bbox| {
+            acc + sigmoid_mapper(bbox.prob, WAVG_THRES)
+        });
 
         dsize[i] = (
             dcount,
@@ -102,12 +106,16 @@ pub fn process(input: &Path) -> Result<Direction, Box<dyn std::error::Error>> {
         input_image = input_image.rotate90();
     }
 
-    let max_idx = dsize
-        .iter()
-        .enumerate()
-        .max_by(|(_, &(_, a)),(_, &(_, b))| a.total_cmp(&b))
-        .map(|(idx, _)| idx)
-        .unwrap();
+    let max_idx: usize = if dsize.iter().all(|(_, val)| val <= &WAVG_THRES) {
+        0
+    } else {
+        dsize
+            .iter()
+            .enumerate()
+            .max_by(|(_, &(_, a)), (_, &(_, b))| a.total_cmp(&b))
+            .map(|(idx, _)| idx)
+            .unwrap()
+    };
 
     match max_idx {
         0 => Ok(Up),
