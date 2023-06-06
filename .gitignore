@@ -1,0 +1,6 @@
+# folders
+/target
+/bin
+
+# files
+/Cargo.lock
