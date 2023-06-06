@@ -1,4 +1,4 @@
-use std::{path::Path};
+use std::{path::Path, time::Instant};
 
 use plicer_fd;
 
@@ -11,7 +11,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         _ => return Err("no file provided")?
     };
 
+    let start = Instant::now();
     plicer_fd::process(Path::new(&filename.unwrap()), outputfile)?;
+    let stop = start.elapsed();
+
+    println!("Process took {} us for {}", stop.as_micros(), filename.unwrap());
 
     Ok(())
 }
